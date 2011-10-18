@@ -1,7 +1,10 @@
 <?php
+namespace KQ;
 
-class BrainDog
+class Driver
 {
+    const DOOR_WILL_CLOSE = 'ﾀﾞｧｼｴﾘｲｪｽ';
+
     const OP_ADD = '+';
     const OP_SUB = '-';
     const OP_GT  = '>';
@@ -12,18 +15,18 @@ class BrainDog
     const OP_RBR = ']';
 
     protected $tokens = array(
-        'わん'     => self::OP_ADD,
-        'きゃん'   => self::OP_SUB,
-        'わおん'   => self::OP_GT,
-        'わーん'   => self::OP_LT,
-        'ばう'     => self::OP_DOT,
-        'きゃうん' => self::OP_COM,
-        'わう'     => self::OP_LBR,
-        'きゅーん' => self::OP_RBR,
+        'ﾀﾞｧﾀﾞｧ' => self::OP_ADD,
+        'ｼｴﾘｼｴﾘ' => self::OP_SUB,
+        'ﾀﾞｧｲｪｽ' => self::OP_GT,
+        'ｲｪｽﾀﾞｧ' => self::OP_LT,
+        'ｼｴﾘﾀﾞｧ' => self::OP_DOT,
+        'ﾀﾞｧｼｴﾘ' => self::OP_COM,
+        'ｼｴﾘｲｪｽ' => self::OP_LBR,
+        'ｲｪｽｼｴﾘ' => self::OP_RBR,
     );
 
     protected $handlers = array(
-        self::OP_ADD => 'increment',
+        self::OP_ADD => 'incremant',
         self::OP_SUB => 'decrement',
         self::OP_GT  => 'next',
         self::OP_LT  => 'prev',
@@ -31,15 +34,44 @@ class BrainDog
         self::OP_COM => 'getchar',
     );
 
-    public function bow($code)
+    protected $pattern;
+
+    public function __construct()
     {
-        $this->execute($this->parse($this->decode($code)));
+        $keywords = array_keys($this->tokens);
+
+        usort($keywords, function($a, $b){
+            $d = strlen($b) - strlen($a);
+            if ($d === 0) {
+                return strcmp($b, $a);
+            }
+            return $d;
+        });
+
+        $keywords = array_map(function($keyword){
+            return preg_quote($keyword, '/');
+        }, $keywords);
+
+        $this->pattern = '/(' . implode('|', $keywords) . ')/u';
+    }
+
+    public function doorWillClose($code)
+    {
+        $out = new \SplFileObject('php://temp', 'wb+');
+        $buf = new IO(null, $out);
+        $this->execute($this->parse($this->decode($code)), $buf);
+
+        $result = '';
+        foreach ($out as $line) {
+            $result .= $line;
+        }
+        return $result;
     }
 
     public function parse($code)
     {
-        $ary = new BrainDog_OpArray();
-        $pst = new SplStack();
+        $ary = new OpArray();
+        $pst = new \SplStack();
         foreach (str_split($code) as $op) {
             $idx = count($ary);
             switch ($op) {
@@ -49,25 +81,28 @@ class BrainDog
                 case self::OP_SUB:
                 case self::OP_DOT:
                 case self::OP_COM:
-                    $ary[$idx] = new BrainDog_OpCode($op);
+                    $ary[$idx] = new OpCode($op);
                     break;
                 case self::OP_LBR:
                     $pst->push($idx);
-                    $ary[$idx] = new BrainDog_OpCode($op);
+                    $ary[$idx] = new OpCode($op);
                     break;
                 case self::OP_RBR:
-                    $pos = $pst->pop(); 
+                    $pos = $pst->pop();
                     $ary[$pos]->jmp = $idx;
-                    $ary[$idx] = new BrainDog_OpCode($op, $pos - 1);
+                    $ary[$idx] = new OpCode($op, $pos - 1);
                     break;
             }
         }
         return $ary;
     }
 
-    public function execute(BrainDog_OpArray $ary)
+    public function execute(OpArray $ary, IO $buf = null)
     {
-        $buf = new BrainDog_Buffer();
+        if (is_null($buf)) {
+            $buf = new IO();
+        }
+
         for ($pos = 0; isset($ary[$pos]); $pos++) {
             $code = $ary[$pos];
             switch ($code->op) {
@@ -93,45 +128,61 @@ class BrainDog
         }
     }
 
-    public function decode($string)
+    public function decode($string, $normalize = true)
     {
-        $keywords = array_keys($this->tokens);
-        usort($keywords, function($a, $b){
-            $d = strlen($b) - strlen($a);
-            if ($d === 0) {
-                return strcmp($b, $a);
-            }
-            return $d;
-        });
-        $pattern = '/(' . implode('|', $keywords) . ')/u';
+        if ($normalize) {
+            $string = mb_convert_kana($string, 'aks', 'UTF-8');
+        }
+
+        $chars = '/[^' . self:: DOOR_WILL_CLOSE . ']/u';
+        $string = preg_replace($chars, '', $string);
+        if (mb_strlen($string) % 6 !== 0) {
+            $err = 'invalid character(s) found';
+            throw new \InvalidArgumentException($err);
+        }
+
         $code = '';
-        if (preg_match_all($pattern, $string, $matches)) {
+        if (preg_match_all($this->pattern, $string, $matches)) {
             foreach ($matches[1] as $key) {
                 $code .= $this->tokens[$key];
             }
         }
+
         return $code;
     }
 
-    public function encode($code)
+    public function encode($code, $auto_exc = true)
     {
         $tokens = array_flip($this->tokens);
-        $others = array('くーん', '…');
         $string = '';
-        foreach (str_split($code) as $op) {
+        foreach (str_split($code) as $offset => $op) {
             if (isset($tokens[$op])) {
                 $string .= $tokens[$op];
-            } elseif (ctype_space($op)) {
+                if ($auto_exc) {
+                    switch ($op) {
+                        case self::OP_GT:
+                        case self::OP_ADD:
+                        case self::OP_DOT:
+                        case self::OP_COM:
+                            $string .= '!!';
+                            break;
+                        default:
+                            $string .= '!';
+                    }
+                }
+            } elseif (preg_match('/[\\s!]/', $op)) {
                 $string .= $op;
             } else {
-                $string .= $others[ord($op) % 2];
+                $err = sprintf('undefined operator 0x%02x at offset %d',
+                               ord($op), $offset);
+                throw new UndefinedOperatorException($err);
             }
         }
         return $string;
     }
 }
 
-class BrainDog_OpCode
+class OpCode
 {
     public /* readonly */ $op;
     public /* readonly */ $jmp;
@@ -143,12 +194,12 @@ class BrainDog_OpCode
     }
 }
 
-class BrainDog_OpArray extends ArrayObject
+class OpArray extends \ArrayObject
 {
     public function append($op)
     {
-        if (!$op instanceof BrainDog_OpCode) {
-            throw new InvalidArgumentException();
+        if (!$op instanceof OpCode) {
+            throw new \InvalidArgumentException();
         }
         parent::append($op);
     }
@@ -159,41 +210,36 @@ class BrainDog_OpArray extends ArrayObject
             $this->append($op);
         }
         if (!(is_int($offset) && $offset >= 0)) {
-            throw new InvalidArgumentException();
+            throw new \OutOfBoundsException();
         }
-        if (!$op instanceof BrainDog_OpCode) {
-            throw new InvalidArgumentException();
+        if (!$op instanceof OpCode) {
+            throw new \InvalidArgumentException();
         }
         parent::offsetSet($offset, $op);
     }
 }
 
-class BrainDog_EOFException extends RuntimeException
-{
-}
-
-class BrainDog_Buffer
+class IO
 {
     protected $buf;
     protected $pos;
     protected $dst;
     protected $src;
 
-    public function __construct(
-        SplFileObject $output = null,
-        SplFileObject $input = null)
+    public function __construct(\SplFileObject $input = null,
+                                \SplFileObject $output = null)
     {
         $this->buf = array(0);
         $this->pos = 0;
-        if (is_null($output)) {
-            $this->dst = new SplFileObject('php://stdout', 'wb');
-        } else {
-            $this->dst = $output;
-        }
         if (is_null($input)) {
-            $this->src = new SplFileObject('php://stdin', 'rb');
+            $this->src = new \SplFileObject('php://stdin', 'rb');
         } else {
             $this->src = $input;
+        }
+        if (is_null($output)) {
+            $this->dst = new \SplFileObject('php://stdout', 'wb');
+        } else {
+            $this->dst = $output;
         }
     }
 
@@ -217,7 +263,7 @@ class BrainDog_Buffer
         return $this->current();
     }
 
-    public function increment()
+    public function incremant()
     {
         $value = $this->current() + 1;
         $this->buf[$this->pos] = $value;
@@ -240,7 +286,15 @@ class BrainDog_Buffer
     {
         $this->buf[$this->pos] = ord($this->src->fgetc());
         if ($this->src->eof()) {
-            throw new BrainDog_EOFException();
+            throw new EOFException();
         }
     }
+}
+
+class EOFException extends \RuntimeException
+{
+}
+
+class UndefinedOperatorException extends \LogicException
+{
 }

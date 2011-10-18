@@ -23,7 +23,7 @@ class BrainDog
     );
 
     protected $handlers = array(
-        self::OP_ADD => 'incremant',
+        self::OP_ADD => 'increment',
         self::OP_SUB => 'decrement',
         self::OP_GT  => 'next',
         self::OP_LT  => 'prev',
@@ -217,7 +217,7 @@ class BrainDog_Buffer
         return $this->current();
     }
 
-    public function incremant()
+    public function increment()
     {
         $value = $this->current() + 1;
         $this->buf[$this->pos] = $value;
